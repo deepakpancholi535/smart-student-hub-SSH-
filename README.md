@@ -8,13 +8,13 @@ Smart Student Hub (SSH) is a student profile and placement-readiness portal. Thi
 - API: Node.js, Express, Zod
 - Data: MongoDB with Mongoose
 - Authentication: bcrypt password hashes and an HttpOnly, SameSite cookie with a signed JWT
-- Resume analysis: server-side OpenAI-compatible chat completions API and PDF text extraction
+- Resume analysis: server-side Cloudflare Workers AI API and PDF text extraction
 
 ## Requirements
 
 - Node.js 20 or newer (and npm)
 - MongoDB 6 or newer, running locally or hosted
-- An AI-provider API key for actual resume analysis; profile and other portal features work without it
+- A Cloudflare account and Workers AI API token for actual resume analysis; profile and other portal features work without it
 
 ## Local setup
 
@@ -54,9 +54,9 @@ The example configuration is in [`server/.env.example`](./server/.env.example).
 | `CLIENT_URL` | No | Allowed frontend origin; defaults to `http://localhost:5173`. |
 | `MONGODB_URI` | Yes | MongoDB connection string. |
 | `JWT_SECRET` | Yes | Random session-signing secret, minimum 32 characters. |
-| `AI_API_KEY` | No | Server-side API key for the OpenAI-compatible analysis provider. Analysis returns a clear configuration error if unset. |
-| `AI_MODEL` | No | Provider model name; defaults to `gpt-4o-mini`. |
-| `AI_API_URL` | No | OpenAI-compatible chat completions endpoint. |
+| `CLOUDFLARE_ACCOUNT_ID` | No | Cloudflare account ID for Workers AI. |
+| `CLOUDFLARE_API_TOKEN` | No | Server-side Cloudflare API token with Workers AI access. Analysis returns a clear configuration error if credentials are unset. |
+| `CLOUDFLARE_MODEL` | No | Workers AI model; defaults to `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. |
 | `UPLOAD_DIR` | No | Private PDF storage directory; defaults to `./uploads`. |
 | `VITE_API_URL` | No | Optional absolute API origin for a separately hosted frontend. Vite proxies `/api` locally. |
 
@@ -64,17 +64,20 @@ The example configuration is in [`server/.env.example`](./server/.env.example).
 
 - Student registration, secure sign-in/out, role-guarded routes, and password changes.
 - Dashboard statistics and profile-completion calculation derived from the student's MongoDB records.
-- Editable professional and academic profile (including semester SGPA), private profile pictures, skills, projects, internships, and secure PDF resume upload/download.
+- Editable professional and academic profile (including semester SGPA), private profile pictures cropped with a square grid editor and stored with the MongoDB profile for persistence, skills, projects, internships, and secure PDF resume upload/download.
 - Achievement drafts and submissions with server-controlled verification state, private PDF certificates, status history, and faculty feedback.
 - Faculty-only pending-request, private certificate-access, and verification decision endpoints. There is no faculty-facing review portal in this version, and faculty cannot verify their own achievement.
 - Resume analysis against a manual job description with server-side PDF text extraction, email/phone redaction, structured response validation, saved per-student history, and an evidence-based score (60% demonstrated required skills, 40% demonstrated responsibilities). No mocked AI analysis is returned.
+- A separate, role-neutral ATS resume checker with a conservative 100-point heuristic score, four evidence-based score dimensions, prioritized actionable findings, and saved private review history. Section headings earn partial credit; impact credit considers bullet volume, action-led wording, and measurable outcomes where relevant. It works for technical and non-technical resumes without requiring a job description; it cannot guarantee a pass in any specific employer's ATS.
+- Profile activity heatmaps for public GitHub contributions and LeetCode submissions over the last 365 days. Each provider is fetched independently and cached for 15 minutes.
 - Unique public portfolio, explicit visibility and disclosure controls, verified achievement badges, and optional explicit resume download.
 - Persistent per-user notifications and account/privacy settings.
 
 ## API overview
 
 - Authentication: `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/logout`, `PUT /api/auth/password`
-- Student: `/api/student/dashboard`, `/api/student/profile`, `/api/student/projects`, `/api/student/achievements`, `/api/student/verifications`, `/api/student/resume`, `/api/student/resume/analyze`, `/api/student/resume/analyses`, `/api/student/portfolio`, `/api/student/notifications`
+- Student: `/api/student/dashboard`, `/api/student/profile`, `/api/student/projects`, `/api/student/achievements`, `/api/student/verifications`, `/api/student/resume`, `/api/student/resume/analyze`, `/api/student/resume/analyses`, `/api/student/resume/ats-check`, `/api/student/resume/ats-reviews`, `/api/student/portfolio`, `/api/student/notifications`
+- Student coding activity: `GET /api/student/profile/activity` reads the authenticated student's saved GitHub profile URL and LeetCode username.
 - Faculty: `GET /api/faculty/verifications`, `GET /api/faculty/achievements/:id/certificate`, and `POST /api/faculty/achievements/:id/decision` (requires an authenticated server-side `faculty` role)
 - Public: `GET /api/public/portfolios/:slug`, `GET /api/public/portfolios/:slug/resume` (resume route only returns a file if public visibility and the student's explicit resume-download setting are both enabled)
 - Health: `GET /api/health`
@@ -88,11 +91,12 @@ npm test --prefix server
 npm run build --prefix client
 ```
 
-The test suite verifies the implemented resume match-score methodology, confirms protected student and faculty APIs reject anonymous requests, and checks file-content validation. Mongo-backed integration tests, AI-provider tests with a configured account, and end-to-end browser tests require running MongoDB and provider credentials.
+The test suite verifies activity calendar parsing, resume match-score methodology, protected student and faculty APIs rejecting anonymous requests, and file-content validation. Mongo-backed integration tests, AI-provider tests with a configured account, and end-to-end browser tests require running MongoDB and provider credentials.
 
 ## Privacy and production notes
 
-- Resumes and certificates contain personal information. Resume text is sent to the configured external AI provider only after the student initiates an analysis. Email and phone patterns are removed first; the submitted job description and necessary resume text are otherwise sent to that provider. Review the provider's retention and privacy terms before enabling the integration.
+- Resumes and certificates contain personal information. Sanitized resume text is sent to Cloudflare Workers AI only after the student initiates a job-match analysis or ATS check. Email and phone patterns are removed first; the submitted job description and necessary resume text are otherwise sent to Cloudflare. Review Cloudflare's retention and privacy terms before enabling the integration.
+- Coding activity heatmaps use public GitHub and LeetCode profile activity. The LeetCode username is used only for the authenticated student's activity endpoint and is not included in public portfolios. Provider rate limits and upstream changes may temporarily make either heatmap unavailable.
 - AI feedback is advisory, provider-dependent, and may be wrong. The percentage is a profile-alignment estimate rather than a probability of hiring.
 - Private files are accessible only through authenticated owner routes unless the student deliberately enables the public-portfolio resume download.
 - Portfolio endpoints return a curated projection, not the underlying student or academic record.

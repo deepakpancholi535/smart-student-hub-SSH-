@@ -19,6 +19,8 @@ test('protected student and faculty routes reject anonymous requests', async (co
     ['GET', '/api/auth/me'],
     ['GET', '/api/student/dashboard'],
     ['GET', '/api/student/profile'],
+    ['GET', '/api/student/profile/activity'],
+    ['GET', '/api/student/resume/ats-reviews'],
     ['POST', '/api/faculty/achievements/507f1f77bcf86cd799439011/decision'],
   ]) {
     const response = await fetch(`${origin}${path}`, { method });

@@ -2,12 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowDownToLine, ArrowRight, Award, Bell, BriefcaseBusiness, Check, CheckCircle2,
   ChevronRight, CircleHelp, ClipboardCheck, Copy, ExternalLink, FileBadge2, FileSearch,
-  FileText, Github, Globe2, GraduationCap, Link2, LoaderCircle, Plus, RefreshCw,
+  Code2, FileText, Github, Globe2, GraduationCap, Link2, LoaderCircle, Plus, RefreshCw,
   Pencil, ShieldCheck, Sparkles, Trash2, Upload, UserRound, X,
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { api, json } from '../services/api';
+import { api, apiBlob, json } from '../services/api';
+import { ProfileAvatar } from '../components/ProfileAvatar';
+import { ProfileImageCropper } from '../components/ProfileImageCropper';
 import {
   EmptyState, ErrorState, Field, FormError, LoadingState, Notice, PageHeader, Panel, StatusBadge, VerificationBadge,
 } from '../components/common';
@@ -97,6 +99,56 @@ function Stat({ icon: Icon, label, value, foot }) {
   return <article className="stat-card"><div className="stat-top"><span>{label}</span><Icon size={18} /></div><strong className="stat-value">{value}</strong><span className="stat-foot">{foot}</span></article>;
 }
 
+function ActivityHeatmap({ platform, data, icon: Icon }) {
+  if (!data || data.status !== 'available') {
+    return (
+      <section className="activity-card">
+        <div className="activity-card-heading"><span className="activity-icon"><Icon size={16} /></span><h3>{platform}</h3></div>
+        <div className="activity-unavailable">{data?.message || `${platform} activity is unavailable.`}</div>
+      </section>
+    );
+  }
+
+  const days = data.days;
+  const offset = days.length ? new Date(`${days[0].date}T00:00:00Z`).getUTCDay() : 0;
+  const weekCount = Math.ceil((offset + days.length) / 7);
+  const monthLabels = Array(weekCount).fill('');
+  days.forEach((day, index) => {
+    if (day.date.slice(8, 10) === '01') {
+      const week = Math.floor((offset + index) / 7);
+      if (!monthLabels[week]) monthLabels[week] = new Intl.DateTimeFormat(undefined, { month: 'short', timeZone: 'UTC' }).format(new Date(`${day.date}T00:00:00Z`));
+    }
+  });
+
+  return (
+    <section className="activity-card">
+      <div className="activity-card-heading">
+        <span className="activity-icon"><Icon size={16} /></span>
+        <h3>{platform}</h3>
+        <strong>{data.totalContributions.toLocaleString()} <span>{platform === 'GitHub' ? 'contributions' : 'submissions'}</span></strong>
+      </div>
+      <div className="activity-scroll" role="group" aria-label={`${platform} activity for the last 12 months`}>
+        <div className="activity-months" style={{ '--activity-weeks': weekCount }}>
+          {monthLabels.map((month, index) => <span key={index}>{month}</span>)}
+        </div>
+        <div className="activity-calendar">
+          <div className="activity-weekdays"><span>Mon</span><span>Wed</span><span>Fri</span></div>
+          <div className="activity-days" style={{ '--activity-weeks': weekCount }}>
+            {Array.from({ length: weekCount * 7 }, (_, index) => {
+              const dayIndex = index - offset;
+              const day = days[dayIndex];
+              if (!day) return <span className="activity-day activity-day-empty" key={`empty-${index}`} />;
+              const label = `${day.count} ${platform === 'GitHub' ? 'contribution' : 'submission'}${day.count === 1 ? '' : 's'} on ${formatDate(day.date)}`;
+              return <span className={`activity-day activity-level-${day.level}`} key={day.date} title={label} role="img" aria-label={label} />;
+            })}
+          </div>
+        </div>
+      </div>
+      <div className="activity-legend"><span>Less</span>{[0, 1, 2, 3, 4].map((level) => <span className={`activity-day activity-level-${level}`} key={level} />)}<span>More</span></div>
+    </section>
+  );
+}
+
 function Quick({ to, icon: Icon, label }) {
   return <Link to={to} className="quick-link"><span><Icon size={17} /></span><strong>{label}</strong><ArrowRight size={15} /></Link>;
 }
@@ -108,6 +160,7 @@ const blankProfile = {
 
 function ProfilePage() {
   const { data, loading, error, refresh } = useLoad('/student/profile');
+  const { data: activityData, loading: activityLoading, error: activityError, refresh: refreshActivity } = useLoad('/student/profile/activity');
   const [form, setForm] = useState(blankProfile);
   const [message, setMessage] = useState('');
   const [failure, setFailure] = useState('');
@@ -116,6 +169,9 @@ function ProfilePage() {
   const [skillCategory, setSkillCategory] = useState('technical');
   const [file, setFile] = useState(null);
   const [imageFile, setImageFile] = useState(null);
+  const [croppedPreview, setCroppedPreview] = useState('');
+  const [cropFile, setCropFile] = useState(null);
+  const [imageUploading, setImageUploading] = useState(false);
   const imageInputRef = useRef(null);
   const [gradeInput, setGradeInput] = useState({ semester: '', sgpa: '' });
   const [project, setProject] = useState({ title: '', description: '', technologies: '', githubUrl: '', demoUrl: '', type: 'project', organization: '', duration: '' });
@@ -127,6 +183,16 @@ function ProfilePage() {
     const { user, ...profile } = data.profile;
     setForm({ ...blankProfile, ...profile, links: { ...blankProfile.links, ...profile.links }, careerInterests: (profile.careerInterests || []).join(', ') });
   }, [data]);
+
+  useEffect(() => {
+    if (!imageFile) {
+      setCroppedPreview('');
+      return undefined;
+    }
+    const previewUrl = URL.createObjectURL(imageFile);
+    setCroppedPreview(previewUrl);
+    return () => URL.revokeObjectURL(previewUrl);
+  }, [imageFile]);
 
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} retry={refresh} />;
@@ -145,7 +211,7 @@ function ProfilePage() {
         careerInterests: form.careerInterests ? form.careerInterests.split(',').map((entry) => entry.trim()).filter(Boolean) : [],
       }));
       setMessage('Your profile has been saved.');
-      await refresh();
+      await Promise.all([refresh(), refreshActivity()]);
     } catch (err) { setFailure(err.message); }
     finally { setSaving(false); }
   }
@@ -185,17 +251,26 @@ function ProfilePage() {
   }
 
   async function uploadProfileImage() {
-    if (!imageFile) return;
+    if (!imageFile) {
+      imageInputRef.current?.click();
+      return;
+    }
     setFailure('');
+    setMessage('');
+    setImageUploading(true);
     const body = new FormData();
     body.append('file', imageFile);
     try {
       await api('/student/profile/image', { method: 'POST', body });
+      const storedImage = await apiBlob('/student/profile/image');
+      if (!storedImage?.size) throw new Error('The server did not return the saved picture. Please try uploading again.');
+      await refresh();
       setImageFile(null);
       if (imageInputRef.current) imageInputRef.current.value = '';
-      await refresh();
+      window.dispatchEvent(new Event('ssh:profile-image-changed'));
       setMessage('Your profile picture was updated.');
     } catch (err) { setFailure(err.message); }
+    finally { setImageUploading(false); }
   }
 
   async function deleteProfileImage() {
@@ -203,6 +278,9 @@ function ProfilePage() {
     try {
       await api('/student/profile/image', { method: 'DELETE' });
       await refresh();
+      setImageFile(null);
+      if (imageInputRef.current) imageInputRef.current.value = '';
+      window.dispatchEvent(new Event('ssh:profile-image-changed'));
       setMessage('Your profile picture was removed.');
     } catch (err) { setFailure(err.message); }
   }
@@ -273,12 +351,31 @@ function ProfilePage() {
       <form className="profile-form" onSubmit={saveProfile}>
         <Panel title="Profile picture" className="form-panel">
           <div className="profile-picture-row">
-            {data.profile.profileImageAvailable
-              ? <img className="profile-picture-preview" src="/api/student/profile/image" alt="Your profile" />
-              : <div className="profile-picture-preview profile-picture-placeholder">{data.profile.user.name.slice(0, 1).toUpperCase()}</div>}
+            {croppedPreview
+              ? <img className="profile-picture-preview" src={croppedPreview} alt="Cropped profile picture preview" />
+              : <ProfileAvatar name={data.profile.user.name} className="profile-picture-preview" fallbackClassName="profile-picture-preview profile-picture-placeholder" alt="Your profile" onError={(reason) => setFailure(`Could not load your saved profile picture: ${reason}`)} />}
             <div className="profile-picture-controls">
-              <p>Use a JPEG, PNG or WebP image up to 2 MB. Your picture is private to your account.</p>
-              <div className="upload-line"><input ref={imageInputRef} aria-label="Select profile picture" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" onChange={(event) => setImageFile(event.target.files?.[0] || null)} /><button type="button" className="button button-secondary" disabled={!imageFile} onClick={uploadProfileImage}><Upload size={14} /> Upload picture</button>{data.profile.profileImageAvailable && <button type="button" className="button button-danger-quiet button-small" onClick={deleteProfileImage}>Remove</button>}</div>
+              <p>Select a JPEG, PNG or WebP image up to 2 MB. Crop it, then upload the square preview. Your picture is private to your account.</p>
+              <div className="upload-line"><input ref={imageInputRef} aria-label="Select profile picture" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" onChange={(event) => {
+                const selected = event.target.files?.[0] || null;
+                event.target.value = '';
+                setMessage('');
+                if (selected && selected.size > 2 * 1024 * 1024) {
+                  setImageFile(null);
+                  setCropFile(null);
+                  setFailure('Profile pictures must be 2 MB or smaller.');
+                  return;
+                }
+                setFailure('');
+                if (selected) {
+                  setImageFile(null);
+                  setCropFile(selected);
+                }
+              }} /><button type="button" className={`button ${imageFile ? 'button-upload-ready' : 'button-secondary'}`} disabled={imageUploading} aria-describedby="profile-picture-selection" onClick={() => {
+                if (imageFile) uploadProfileImage();
+                else imageInputRef.current?.click();
+              }}><Upload size={14} /> {imageUploading ? 'Uploading…' : imageFile ? 'Upload' : 'Choose picture'}</button>{imageFile && <button type="button" className="button button-secondary button-small" disabled={imageUploading} onClick={() => imageInputRef.current?.click()}>Change crop</button>}{data.profile.profileImageAvailable && <button type="button" className="button button-danger-quiet button-small" disabled={imageUploading} onClick={deleteProfileImage}>Remove</button>}</div>
+              <small id="profile-picture-selection" aria-live="polite">{imageFile ? 'Cropped preview ready. Select Upload to save this picture.' : 'Choose a picture to open the crop editor.'}</small>
             </div>
           </div>
         </Panel>
@@ -312,10 +409,29 @@ function ProfilePage() {
             <Field label="GitHub"><input type="url" maxLength={300} value={form.links?.github || ''} onChange={(event) => setForm({ ...form, links: { ...form.links, github: event.target.value } })} placeholder="https://github.com/username" /></Field>
             <Field label="LinkedIn"><input type="url" maxLength={300} value={form.links?.linkedin || ''} onChange={(event) => setForm({ ...form, links: { ...form.links, linkedin: event.target.value } })} placeholder="https://linkedin.com/in/username" /></Field>
             <Field label="Portfolio website"><input type="url" maxLength={300} value={form.links?.portfolio || ''} onChange={(event) => setForm({ ...form, links: { ...form.links, portfolio: event.target.value } })} placeholder="https://example.com" /></Field>
+            <Field label="LeetCode username"><input maxLength={30} pattern="[A-Za-z0-9_-]{1,30}" value={form.links?.leetcodeUsername || ''} onChange={(event) => setForm({ ...form, links: { ...form.links, leetcodeUsername: event.target.value } })} placeholder="your-leetcode-username" /><small>Enter your username, not a profile URL.</small></Field>
           </div>
         </Panel>
         <div className="form-footer"><span className="caption">Enrollment identifiers are managed by your institution.</span><button className="button button-primary" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</button></div>
       </form>
+      {cropFile && <ProfileImageCropper file={cropFile} onCancel={() => setCropFile(null)} onComplete={(croppedFile) => {
+        setImageFile(croppedFile);
+        setCropFile(null);
+      }} />}
+      <Panel
+        title="Coding activity"
+        className="section-spaced activity-panel"
+        action={<button className="text-button" onClick={refreshActivity}><RefreshCw size={13} /> Refresh</button>}
+      >
+        <p className="panel-note">Public GitHub contributions and LeetCode submissions over the last 12 months. Activity updates when you refresh.</p>
+        {activityLoading ? <LoadingState label="Loading coding activity…" /> : activityError ? <ErrorState message={activityError} retry={refreshActivity} /> : (
+          <div className="activity-grid">
+            <ActivityHeatmap platform="GitHub" data={activityData.github} icon={Github} />
+            <ActivityHeatmap platform="LeetCode" data={activityData.leetcode} icon={Code2} />
+          </div>
+        )}
+        <p className="activity-disclosure">Activity is fetched from public profile data and may not include private repositories or submissions. If a provider is unavailable, the rest of your profile still works.</p>
+      </Panel>
       <Panel title="Skills" className="section-spaced">
         {form.skills?.length > 0 ? <div className="skill-list">{form.skills.map((skill, index) => <span className="skill-chip" key={`${skill.name}-${index}`}>{skill.name} <small>{skill.category === 'soft' ? 'Soft skill' : 'Technical'}</small><button aria-label={`Remove ${skill.name}`} onClick={() => removeSkill(index)}><X size={13} /></button></span>)}</div> : <p className="panel-note">Add the skills you want to highlight on your profile.</p>}
         <form className="inline-form" onSubmit={addSkill}><input aria-label="Skill name" required maxLength={60} value={skillName} onChange={(event) => setSkillName(event.target.value)} placeholder="e.g. JavaScript" /><select aria-label="Skill category" value={skillCategory} onChange={(event) => setSkillCategory(event.target.value)}><option value="technical">Technical</option><option value="soft">Soft skill</option></select><button className="button button-secondary"><Plus size={15} /> Add skill</button></form>
@@ -463,7 +579,7 @@ function AnalyzerPage() {
     <>
       <PageHeader title="AI resume analyzer" description="See how your resume's evidence aligns with a role you're interested in." />
       <div className="privacy-note"><ShieldCheck size={16} /><span>Your resume is private. A sanitized text extract is sent to the configured AI provider only when you request analysis. Scanned PDFs aren't supported.</span></div>
-      {!loading && historyData && !historyData.aiConfigured && <div className="notice notice-warning"><CircleHelp size={16} /> The AI provider isn't configured yet. An administrator can configure it on the server; no simulated results will be shown.</div>}
+      {!loading && historyData && !historyData.aiConfigured && <div className="notice notice-warning"><CircleHelp size={16} /> Cloudflare Workers AI is not configured. Add the Cloudflare account ID and API token to the server environment; no simulated results will be shown.</div>}
       {failure && <ErrorState message={failure} />}
       <div className="content-grid analyzer-grid">
         <Panel title="Compare against a job description">
@@ -483,6 +599,122 @@ function AnalyzerPage() {
       </Panel>
     </>
   );
+}
+
+function AtsCheckerPage() {
+  const { data: historyData, loading, error, refresh } = useLoad('/student/resume/ats-reviews');
+  const [review, setReview] = useState(null);
+  const [failure, setFailure] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function checkResume(event) {
+    event.preventDefault();
+    setBusy(true);
+    setFailure('');
+    setReview(null);
+    try {
+      const response = await api('/student/resume/ats-check', {
+        method: 'POST',
+        body: new FormData(event.currentTarget),
+      });
+      setReview(response.review);
+      await refresh();
+    } catch (requestError) {
+      setFailure(requestError.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openReview(id) {
+    setFailure('');
+    try {
+      const response = await api(`/student/resume/ats-reviews/${id}`);
+      setReview(response.review);
+    } catch (requestError) {
+      setFailure(requestError.message);
+    }
+  }
+
+  const issues = review ? [...review.issues].sort((left, right) => (
+    { high: 0, medium: 1, low: 2 }[left.priority] - { high: 0, medium: 1, low: 2 }[right.priority]
+  )) : [];
+
+  return (
+    <>
+      <PageHeader title="General ATS resume check" description="Review resume readability, structure, formatting signals, and wording for any profession—without needing a job description." />
+      <div className="privacy-note"><ShieldCheck size={16} /><span>Your resume stays private. A sanitized text extract is sent to Cloudflare only when you request a check. This general review does not compare against a job posting.</span></div>
+      {!loading && historyData && !historyData.aiConfigured && <div className="notice notice-warning"><CircleHelp size={16} /> Cloudflare Workers AI is not configured. Add the Cloudflare account ID and API token to the server environment.</div>}
+      {failure && <ErrorState message={failure} />}
+      <div className="content-grid analyzer-grid ats-checker-grid">
+        <Panel title="Run a general resume check">
+          <form className="form-stack" onSubmit={checkResume}>
+            <Field label="Resume PDF" hint="Upload a PDF for this check, or leave empty to use your saved profile resume. Maximum 5 MB.">
+              <input name="file" type="file" accept=".pdf,application/pdf" />
+            </Field>
+            <button className="button button-primary" disabled={busy || (!historyData?.aiConfigured && !loading)}>
+              {busy ? <><LoaderCircle className="spin" size={16} /> Checking resume…</> : <><ClipboardCheck size={16} /> Check ATS readiness</>}
+            </button>
+          </form>
+          <div className="ats-rubric">
+            <h3>What the score checks</h3>
+            <ul>
+              <li>PDF text extraction and readable structure</li>
+              <li>Common sections such as experience, education, and skills</li>
+              <li>Scannable bullets, action-oriented wording, and specific outcomes</li>
+              <li>Consistency signals available in extracted text</li>
+            </ul>
+          </div>
+        </Panel>
+        <Panel title={review ? 'ATS readiness report' : 'A role-neutral review'} className="result-panel">
+          {review ? <AtsReviewResult review={review} issues={issues} /> : <div className="analyzer-intro">
+            <div className="resume-symbol"><ClipboardCheck size={21} /></div>
+            <h3>Detailed feedback, not a job-match score.</h3>
+            <p>Get a general ATS-readiness estimate and a prioritized list of issues with practical fixes. It works across technical and non-technical resumes and does not require a job description.</p>
+            <span className="caption">ATS platforms differ. This is an advisory checklist, not a guarantee that a resume will pass a particular employer’s system.</span>
+          </div>}
+        </Panel>
+      </div>
+      <Panel title="ATS check history" className="section-spaced">
+        {loading ? <LoadingState /> : error ? <ErrorState message={error} retry={refresh} /> : !historyData?.reviews.length
+          ? <EmptyState icon={ClipboardCheck} title="Your ATS checks will appear here." description="Run a general check to get a score breakdown and prioritized resume improvements." />
+          : <div className="list-rows">{historyData.reviews.map((item) => <button className="list-row history-row" key={item._id} onClick={() => openReview(item._id)}>
+            <div className="row-icon"><ClipboardCheck size={17} /></div>
+            <div className="row-main"><strong>General ATS review</strong><span>{formatDate(item.createdAt)}</span></div>
+            <span className="score-pill">{item.score}/100</span><ChevronRight size={16} />
+          </button>)}</div>}
+      </Panel>
+    </>
+  );
+}
+
+function AtsReviewResult({ review, issues }) {
+  const priorityLabels = { high: 'High priority', medium: 'Medium priority', low: 'Polish' };
+  return <div className="ats-review-results">
+    <div className="score-row">
+      <div className="score-circle" aria-label={`ATS readiness score ${review.score} out of 100`}><strong>{review.score}</strong><span>/ 100</span></div>
+      <div><span className="eyebrow">GENERAL ATS READINESS</span><p>{review.summary}</p></div>
+    </div>
+    <p className="scoring-note">{review.limitations}</p>
+    <h3>Score breakdown</h3>
+    <div className="ats-dimensions">{review.dimensions.map((dimension) => <div className="ats-dimension" key={dimension.name}>
+      <div><strong>{dimension.name}</strong><span>{dimension.score}/{dimension.max}</span></div>
+      <progress max={dimension.max} value={dimension.score} aria-label={`${dimension.name}: ${dimension.score} of ${dimension.max}`} />
+      <p>{dimension.detail}</p>
+    </div>)}</div>
+    <h3>Issues and improvements <span className="ats-issue-count">{issues.length}</span></h3>
+    <div className="ats-issue-list">{issues.map((issue, index) => <article className={`ats-issue ats-issue-${issue.priority}`} key={`${issue.category}-${issue.title}-${index}`}>
+      <div className="ats-issue-heading">
+        <span className={`ats-priority ats-priority-${issue.priority}`}>{priorityLabels[issue.priority]}</span>
+        <span className="ats-category">{formatCategory(issue.category)}</span>
+      </div>
+      <h4>{issue.title}</h4>
+      <p>{issue.issue}</p>
+      <div className="ats-recommendation"><strong>What to improve</strong><span>{issue.recommendation}</span></div>
+      {issue.example && <div className="ats-example"><strong>Example</strong><span>{issue.example}</span></div>}
+    </article>)}</div>
+    <p className="caption">Suggested edits are advisory. Keep every claim accurate and only include results you can support.</p>
+  </div>;
 }
 
 function AnalysisResult({ analysis }) {
@@ -618,7 +850,7 @@ function SettingsPage() {
     catch (err) { setFailure(err.message); }
   }
 
-  return <><PageHeader title="Settings" description="Account access, privacy and your profile visibility." />{message && <Notice>{message}</Notice>}{failure && <ErrorState message={failure} />}<Panel title="Account" className="settings-panel"><div className="account-summary"><div className="avatar">{user?.name?.slice(0, 1).toUpperCase()}</div><div><strong>{user?.name}</strong><span>{user?.email}</span><small>Student account</small></div></div><form className="password-form" onSubmit={changePassword}><h3>Change password</h3><div className="form-grid"><Field label="Current password"><input type="password" autoComplete="current-password" required minLength={1} maxLength={72} value={password.currentPassword} onChange={(event) => setPassword({ ...password, currentPassword: event.target.value })} /></Field><Field label="New password"><input type="password" autoComplete="new-password" required minLength={10} maxLength={72} value={password.newPassword} onChange={(event) => setPassword({ ...password, newPassword: event.target.value })} /><small>10–72 UTF-8 bytes. Changing your password signs out other active sessions.</small></Field></div><button className="button button-secondary" disabled={busy}>{busy ? 'Updating…' : 'Update password'}</button></form></Panel><Panel title="Privacy" className="settings-panel"><p className="panel-note">Your portfolio is the only information visible to people with its public link. Enrollment identifiers, phone number, private email, faculty feedback and private certificates are never shown on it.</p>{data.portfolio ? <SettingsToggle label="Public portfolio" description="Make your student portfolio visible to anyone with the link." checked={data.portfolio.isPublic} onChange={togglePrivacy} /> : <div className="settings-empty"><Globe2 size={17} /><span>You have not generated a digital portfolio.</span><Link className="text-button" to="/student/portfolio">Manage portfolio <ArrowRight size={14} /></Link></div>}</Panel><Panel title="Session" className="settings-panel"><p className="panel-note">Sign out of this browser. Your private profile and documents remain protected.</p><button className="button button-danger-quiet" onClick={logout}><X size={15} /> Sign out</button></Panel></>;
+  return <><PageHeader title="Settings" description="Account access, privacy and your profile visibility." />{message && <Notice>{message}</Notice>}{failure && <ErrorState message={failure} />}<Panel title="Account" className="settings-panel"><div className="account-summary"><ProfileAvatar name={user?.name} className="avatar" /><div><strong>{user?.name}</strong><span>{user?.email}</span><small>Student account</small></div></div><form className="password-form" onSubmit={changePassword}><h3>Change password</h3><div className="form-grid"><Field label="Current password"><input type="password" autoComplete="current-password" required minLength={1} maxLength={72} value={password.currentPassword} onChange={(event) => setPassword({ ...password, currentPassword: event.target.value })} /></Field><Field label="New password"><input type="password" autoComplete="new-password" required minLength={10} maxLength={72} value={password.newPassword} onChange={(event) => setPassword({ ...password, newPassword: event.target.value })} /><small>10–72 UTF-8 bytes. Changing your password signs out other active sessions.</small></Field></div><button className="button button-secondary" disabled={busy}>{busy ? 'Updating…' : 'Update password'}</button></form></Panel><Panel title="Privacy" className="settings-panel"><p className="panel-note">Your portfolio is the only information visible to people with its public link. Enrollment identifiers, phone number, private email, faculty feedback and private certificates are never shown on it.</p>{data.portfolio ? <SettingsToggle label="Public portfolio" description="Make your student portfolio visible to anyone with the link." checked={data.portfolio.isPublic} onChange={togglePrivacy} /> : <div className="settings-empty"><Globe2 size={17} /><span>You have not generated a digital portfolio.</span><Link className="text-button" to="/student/portfolio">Manage portfolio <ArrowRight size={14} /></Link></div>}</Panel><Panel title="Session" className="settings-panel"><p className="panel-note">Sign out of this browser. Your private profile and documents remain protected.</p><button className="button button-danger-quiet" onClick={logout}><X size={15} /> Sign out</button></Panel></>;
 }
 
 function formatDate(value) {
@@ -641,6 +873,7 @@ export const studentRoutes = [
   { path: 'achievements', element: <AchievementsPage /> },
   { path: 'verification', element: <VerificationPage /> },
   { path: 'resume-analyzer', element: <AnalyzerPage /> },
+  { path: 'ats-checker', element: <AtsCheckerPage /> },
   { path: 'portfolio', element: <PortfolioPage /> },
   { path: 'notifications', element: <NotificationsPage /> },
   { path: 'settings', element: <SettingsPage /> },

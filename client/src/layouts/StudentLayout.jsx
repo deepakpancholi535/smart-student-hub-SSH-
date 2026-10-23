@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-  Bell, BriefcaseBusiness, CircleUserRound, FileSearch, FolderKanban,
+  Bell, BriefcaseBusiness, CircleUserRound, ClipboardCheck, FileSearch, FolderKanban,
   GraduationCap, LayoutDashboard, LogOut, Menu, Settings, ShieldCheck, UserRound, X,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
+import { ProfileAvatar } from '../components/ProfileAvatar';
 
 const items = [
   { to: '/student/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -13,6 +14,7 @@ const items = [
   { to: '/student/achievements', label: 'Skills & achievements', icon: FolderKanban },
   { to: '/student/verification', label: 'Faculty verification', icon: ShieldCheck },
   { to: '/student/resume-analyzer', label: 'AI resume analyzer', icon: FileSearch },
+  { to: '/student/ats-checker', label: 'General ATS check', icon: ClipboardCheck },
   { to: '/student/portfolio', label: 'Digital portfolio', icon: BriefcaseBusiness },
   { to: '/student/notifications', label: 'Notifications', icon: Bell, count: true },
 ];
@@ -86,7 +88,7 @@ export function StudentLayout() {
         <div className="sidebar-bottom">
           <div className="help-card"><div className="help-icon"><CircleUserRound size={17} /></div><strong>Your next opportunity<br />starts with your profile.</strong><span>Keep it current and show your best work.</span></div>
           <button className="profile-menu" onClick={handleSignOut}>
-            <div className="avatar">{user?.name?.slice(0, 1).toUpperCase() || 'S'}</div>
+            <ProfileAvatar name={user?.name} className="avatar" />
             <div className="profile-menu-text"><strong>{user?.name || 'Student'}</strong><span>{user?.email}</span></div>
             <LogOut size={16} />
           </button>
@@ -100,7 +102,7 @@ export function StudentLayout() {
           <div className="topbar-right">
             {unreadError && <span className="caption" role="alert">Notifications unavailable</span>}
             <button className="top-icon" aria-label="Notifications" onClick={() => navigate('/student/notifications')}><Bell size={19} />{unread > 0 && <i />}</button>
-            <div className="topbar-user"><span className="avatar avatar-small">{user?.name?.slice(0, 1).toUpperCase() || 'S'}</span><span>{user?.name?.split(' ')[0]}</span></div>
+            <div className="topbar-user"><ProfileAvatar name={user?.name} className="avatar avatar-small" /><span>{user?.name?.split(' ')[0]}</span></div>
           </div>
         </header>
         <div className="page-content"><Outlet /></div>

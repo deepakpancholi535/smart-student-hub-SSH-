@@ -37,3 +37,15 @@ test('accepts supported image signatures rather than trusting the filename', asy
 
   assert.equal(await inspectProfileImage({ path: filePath }), 'image/png');
 });
+
+test('accepts validated in-memory images for durable profile storage', async () => {
+  const buffer = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  assert.equal(await inspectProfileImage({ buffer }), 'image/png');
+});
+
+test('rejects unsupported in-memory image content', async () => {
+  await assert.rejects(
+    inspectProfileImage({ buffer: Buffer.from('not an image') }),
+    { status: 400, message: 'The uploaded file is not a supported image.' },
+  );
+});

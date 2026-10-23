@@ -26,6 +26,7 @@ const resumeSchema = new mongoose.Schema(
 const profileImageSchema = new mongoose.Schema(
   {
     storageKey: String,
+    data: Buffer,
     mimeType: { type: String, enum: ['image/jpeg', 'image/png', 'image/webp'] },
   },
   { _id: false },
@@ -59,6 +60,7 @@ const profileSchema = new mongoose.Schema(
       github: { type: String, trim: true, maxlength: 300 },
       linkedin: { type: String, trim: true, maxlength: 300 },
       portfolio: { type: String, trim: true, maxlength: 300 },
+      leetcodeUsername: { type: String, trim: true, lowercase: true, maxlength: 30 },
     },
     projects: { type: [projectSchema], default: [] },
     resume: { type: resumeSchema, default: null },

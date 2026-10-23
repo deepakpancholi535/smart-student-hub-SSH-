@@ -8,6 +8,7 @@ import { z } from 'zod';
 import Achievement from '../models/Achievement.js';
 import Notification from '../models/Notification.js';
 import Portfolio from '../models/Portfolio.js';
+import ResumeAtsReview from '../models/ResumeAtsReview.js';
 import ResumeAnalysis from '../models/ResumeAnalysis.js';
 import StudentProfile from '../models/StudentProfile.js';
 import User from '../models/User.js';
@@ -15,11 +16,21 @@ import { config } from '../config/env.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { asyncHandler, HttpError } from '../middleware/errors.js';
 import { assertPdfFile, getStoredFilePath, inspectProfileImage, receivePdf, receiveProfileImage, removeStoredFile } from '../middleware/uploads.js';
-import { analyzeResume, extractResumeText } from '../services/resumeAnalyzer.js';
+import { analyzeResume, extractResumeDocument, extractResumeText } from '../services/resumeAnalyzer.js';
+import { reviewResumeForAts } from '../services/resumeAts.js';
 import { getPublicPortfolio } from '../services/portfolio.js';
+import { getActivityHeatmaps } from '../services/activityHeatmaps.js';
 
 const router = Router();
 router.use(requireAuth, requireRole('student'));
+const profileActivityLimit = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 20,
+  keyGenerator: (req) => req.user.id,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'You have refreshed your activity heatmaps too often. Please try again later.' },
+});
 const resumeAnalysisLimit = rateLimit({
   windowMs: 60 * 60 * 1000,
   limit: 10,
@@ -30,6 +41,18 @@ const resumeAnalysisLimit = rateLimit({
 });
 
 const linkSchema = z.string().trim().max(300).refine((value) => !value || /^https?:\/\/\S+$/i.test(value), 'Use a valid http or https URL.');
+const githubProfileSchema = linkSchema.refine((value) => {
+  if (!value) return true;
+  try {
+    const url = new URL(value);
+    return ['github.com', 'www.github.com'].includes(url.hostname.toLowerCase())
+      && /^\/[A-Za-z0-9-]+\/?$/.test(url.pathname)
+      && !url.search
+      && !url.hash;
+  } catch {
+    return false;
+  }
+}, 'Enter a GitHub profile URL, such as https://github.com/username.');
 const profileSchema = z.object({
   phone: z.string().trim().max(30).optional(),
   department: z.string().trim().max(120).optional(),
@@ -50,9 +73,12 @@ const profileSchema = z.object({
     level: z.enum(['beginner', 'intermediate', 'advanced']).optional(),
   })).max(50).optional(),
   links: z.object({
-    github: linkSchema.optional(),
+    github: githubProfileSchema.optional(),
     linkedin: linkSchema.optional(),
     portfolio: linkSchema.optional(),
+    leetcodeUsername: z.string().trim().toLowerCase().max(30)
+      .regex(/^[a-z0-9_-]*$/, 'Use only letters, numbers, underscores or hyphens for your LeetCode username.')
+      .optional(),
   }).optional(),
 });
 
@@ -67,13 +93,16 @@ function publicProfile(user, profile) {
   const data = profile.toObject();
   delete data.enrollmentNumber;
   if (data.resume) delete data.resume.storageKey;
-  if (data.profileImage) delete data.profileImage.storageKey;
-  data.profileImageAvailable = Boolean(profile.profileImage?.storageKey);
+  if (data.profileImage) {
+    delete data.profileImage.storageKey;
+    delete data.profileImage.data;
+  }
+  data.profileImageAvailable = Boolean(profile.profileImage?.data?.length || profile.profileImage?.storageKey);
   return { ...data, user: { id: user.id, name: user.name, email: user.email, roles: user.roles } };
 }
 
 async function unlinkUpload(file) {
-  if (!file) return;
+  if (!file?.path) return;
   await fs.unlink(file.path).catch((error) => {
     if (error.code !== 'ENOENT') throw error;
   });
@@ -106,13 +135,18 @@ router.get('/dashboard', asyncHandler(async (req, res) => {
     recentAchievements: achievements,
     recentNotifications: notifications,
     latestAnalysis,
-    aiConfigured: Boolean(config.aiApiKey),
+    aiConfigured: Boolean(config.cloudflareAccountId && config.cloudflareApiToken),
   });
 }));
 
 router.get('/profile', asyncHandler(async (req, res) => {
   const { user, profile } = await currentProfile(req.user.id);
   res.json({ profile: publicProfile(user, profile) });
+}));
+
+router.get('/profile/activity', profileActivityLimit, asyncHandler(async (req, res) => {
+  const { profile } = await currentProfile(req.user.id);
+  res.json(await getActivityHeatmaps(profile.links || {}));
 }));
 
 router.put('/profile', asyncHandler(async (req, res) => {
@@ -125,20 +159,40 @@ router.put('/profile', asyncHandler(async (req, res) => {
 
 router.post('/profile/image', receiveProfileImage, asyncHandler(async (req, res) => {
   if (!req.file) throw new HttpError(400, 'Select a profile picture to upload.');
-  const mimeType = await inspectProfileImage(req.file);
-  const profile = await StudentProfile.findOne({ user: req.user.id });
-  const previousKey = profile.profileImage?.storageKey;
-  profile.profileImage = { storageKey: path.basename(req.file.filename), mimeType };
-  await profile.save();
-  if (previousKey) await removeStoredFile(previousKey);
-  res.status(201).json({ profileImageAvailable: true });
+  let saved = false;
+  try {
+    const mimeType = await inspectProfileImage(req.file);
+    const { profile } = await currentProfile(req.user.id);
+    const previousKey = profile.profileImage?.storageKey;
+    profile.profileImage = { data: req.file.buffer, mimeType };
+    await profile.save();
+    saved = true;
+    if (previousKey) await removeStoredFile(previousKey);
+    res.status(201).json({ profileImageAvailable: true });
+  } catch (error) {
+    if (!saved) await unlinkUpload(req.file);
+    throw error;
+  }
 }));
 
 router.get('/profile/image', asyncHandler(async (req, res) => {
   const profile = await StudentProfile.findOne({ user: req.user.id }).select('profileImage');
-  if (!profile?.profileImage?.storageKey) throw new HttpError(404, 'No profile picture has been uploaded.');
-  const imagePath = getStoredFilePath(profile.profileImage.storageKey);
-  const image = await fs.readFile(imagePath);
+  if (!profile?.profileImage?.data?.length && !profile?.profileImage?.storageKey) {
+    throw new HttpError(404, 'No profile picture has been uploaded.');
+  }
+  let image;
+  if (profile.profileImage.data?.length) {
+    image = Buffer.from(profile.profileImage.data);
+  } else {
+    try {
+      image = await fs.readFile(getStoredFilePath(profile.profileImage.storageKey));
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        throw new HttpError(410, 'Your saved profile picture is no longer available. Upload it again to restore it.');
+      }
+      throw error;
+    }
+  }
   res.type(profile.profileImage.mimeType).set('Cache-Control', 'private, no-store').send(image);
 }));
 
@@ -462,12 +516,52 @@ router.post('/resume/analyze', resumeAnalysisLimit, receivePdf, asyncHandler(asy
   res.status(201).json({ analysis });
 }));
 
+router.post('/resume/ats-check', resumeAnalysisLimit, receivePdf, asyncHandler(async (req, res) => {
+  await assertPdfFile(req.file);
+  try {
+    const profile = await StudentProfile.findOne({ user: req.user.id });
+    const filePath = req.file?.path || (profile?.resume?.storageKey ? getStoredFilePath(profile.resume.storageKey) : null);
+    if (!filePath) throw new HttpError(400, 'Upload a PDF or add a resume to your profile before running an ATS check.');
+
+    const document = await extractResumeDocument(filePath);
+    const review = await reviewResumeForAts(document.text, document.pages);
+    const savedReview = await ResumeAtsReview.create({
+      student: req.user.id,
+      resumeUpdatedAt: profile?.resume?.updatedAt,
+      score: review.score,
+      dimensions: review.dimensions,
+      checks: review.checks,
+      summary: review.summary,
+      issues: review.issues,
+      limitations: 'Conservative, evidence-based estimate from extracted PDF text: section headings earn only partial credit, while impact credit depends on multiple bullets, action-led wording, and specific outcomes where relevant. Visual layout cannot be fully assessed from text extraction; ATS products vary, and this is not a guarantee of passing any employer system.',
+    });
+    res.status(201).json({ review: savedReview });
+  } finally {
+    await unlinkUpload(req.file);
+  }
+}));
+
+router.get('/resume/ats-reviews', asyncHandler(async (req, res) => {
+  const reviews = await ResumeAtsReview.find({ student: req.user.id })
+    .select('score summary createdAt')
+    .sort({ createdAt: -1 })
+    .limit(30);
+  res.json({ reviews, aiConfigured: Boolean(config.cloudflareAccountId && config.cloudflareApiToken) });
+}));
+
+router.get('/resume/ats-reviews/:id', asyncHandler(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) throw new HttpError(400, 'Invalid ATS review identifier.');
+  const review = await ResumeAtsReview.findOne({ _id: req.params.id, student: req.user.id });
+  if (!review) throw new HttpError(404, 'ATS review not found.');
+  res.json({ review });
+}));
+
 router.get('/resume/analyses', asyncHandler(async (req, res) => {
   const analyses = await ResumeAnalysis.find({ student: req.user.id })
     .select('jobTitle score createdAt')
     .sort({ createdAt: -1 })
     .limit(30);
-  res.json({ analyses, aiConfigured: Boolean(config.aiApiKey) });
+  res.json({ analyses, aiConfigured: Boolean(config.cloudflareAccountId && config.cloudflareApiToken) });
 }));
 
 router.get('/resume/analyses/:id', asyncHandler(async (req, res) => {

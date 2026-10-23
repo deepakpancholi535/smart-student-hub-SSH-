@@ -21,8 +21,8 @@ export const config = {
   clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
   mongoUri: process.env.MONGODB_URI,
   jwtSecret: process.env.JWT_SECRET,
-  aiApiKey: process.env.AI_API_KEY || '',
-  aiModel: process.env.AI_MODEL || 'gpt-4o-mini',
-  aiApiUrl: process.env.AI_API_URL || 'https://api.openai.com/v1/chat/completions',
+  cloudflareAccountId: process.env.CLOUDFLARE_ACCOUNT_ID || '',
+  cloudflareApiToken: process.env.CLOUDFLARE_API_TOKEN || '',
+  cloudflareModel: process.env.CLOUDFLARE_MODEL || '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
   uploadDir: path.resolve(process.env.UPLOAD_DIR || path.join(serverRoot, 'uploads')),
 };
