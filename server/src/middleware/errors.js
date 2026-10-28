@@ -14,6 +14,12 @@ export function notFoundHandler(req, res, next) {
 }
 
 export function errorHandler(error, req, res, _next) {
+  console.error('Unhandled request error:', {
+    method: req.method,
+    path: req.originalUrl,
+    message: error.message,
+    stack: error.stack,
+  });
   if (error.type === 'entity.parse.failed') {
     return res.status(400).json({ message: 'The request body contains invalid JSON.' });
   }
@@ -31,6 +37,5 @@ export function errorHandler(error, req, res, _next) {
     return res.status(409).json({ message: 'That account or portfolio URL is already in use.' });
   }
   if (error.status) return res.status(error.status).json({ message: error.message });
-  console.error('Unhandled request error:', error.message);
   return res.status(500).json({ message: 'An unexpected server error occurred.' });
 }
