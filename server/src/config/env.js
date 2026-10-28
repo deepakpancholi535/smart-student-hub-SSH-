@@ -24,5 +24,5 @@ export const config = {
   cloudflareAccountId: process.env.CLOUDFLARE_ACCOUNT_ID || '',
   cloudflareApiToken: process.env.CLOUDFLARE_API_TOKEN || '',
   cloudflareModel: process.env.CLOUDFLARE_MODEL || '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
-  uploadDir: path.resolve(process.env.UPLOAD_DIR || path.join(serverRoot, 'uploads')),
+  uploadDir: path.resolve(process.env.UPLOAD_DIR || (process.env.VERCEL ? '/tmp/uploads' : path.join(serverRoot, 'uploads'))),
 };
