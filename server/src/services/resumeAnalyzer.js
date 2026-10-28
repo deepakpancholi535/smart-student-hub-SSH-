@@ -56,9 +56,9 @@ export async function extractResumeDocument(filePath) {
   };
 }
 
-async function readResumePdf(filePath) {
+async function readResumePdf(source) {
   try {
-    return await pdf(filePath);
+    return await pdf(source);
   } catch {
     throw new HttpError(422, 'We could not read this PDF. Please try another text-based PDF.');
   }

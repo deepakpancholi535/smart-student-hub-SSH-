@@ -4,7 +4,7 @@ import { HttpError } from '../middleware/errors.js';
 
 export async function getPublicPortfolio(portfolio) {
   const profile = await StudentProfile.findOne({ user: portfolio.student })
-    .select('summary department graduationYear skills links projects resume')
+    .select('summary department graduationYear skills links projects resume +resume.data')
     .populate('user', 'name');
   if (!profile) throw new HttpError(404, 'Portfolio not found.');
 
@@ -24,7 +24,7 @@ export async function getPublicPortfolio(portfolio) {
     projects: portfolio.showProjects ? profile.projects.map(({ title, description, technologies, githubUrl, demoUrl, type, organization }) => ({
       title, description, technologies, githubUrl, demoUrl, type, organization,
     })) : [],
-    resumeAvailable: Boolean(portfolio.showResume && profile.resume?.storageKey),
+    resumeAvailable: Boolean(portfolio.showResume && (profile.resume?.data?.length || profile.resume?.storageKey)),
     achievements: achievements.map(({ title, category, issuer, issueDate, description, status }) => ({
       title, category, issuer, issueDate, description, verified: status === 'verified',
     })),

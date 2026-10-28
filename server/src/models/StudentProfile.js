@@ -17,6 +17,7 @@ const projectSchema = new mongoose.Schema(
 const resumeSchema = new mongoose.Schema(
   {
     storageKey: String,
+    data: { type: Buffer, select: false },
     originalName: String,
     updatedAt: Date,
   },

@@ -84,7 +84,7 @@ const profileSchema = z.object({
 
 async function currentProfile(userId) {
   const user = await User.findById(userId).select('name email roles');
-  let profile = await StudentProfile.findOne({ user: userId });
+  let profile = await StudentProfile.findOne({ user: userId }).select('+resume.data');
   if (!profile) profile = await StudentProfile.create({ user: userId });
   return { user, profile };
 }
@@ -92,7 +92,10 @@ async function currentProfile(userId) {
 function publicProfile(user, profile) {
   const data = profile.toObject();
   delete data.enrollmentNumber;
-  if (data.resume) delete data.resume.storageKey;
+  if (data.resume) {
+    delete data.resume.storageKey;
+    delete data.resume.data;
+  }
   if (data.profileImage) {
     delete data.profileImage.storageKey;
     delete data.profileImage.data;
@@ -117,7 +120,7 @@ router.get('/dashboard', asyncHandler(async (req, res) => {
   ]);
   const completionFields = [
     Boolean(user.name), Boolean(profile.department), Boolean(profile.graduationYear),
-    Boolean(profile.degree || profile.cgpa), profile.skills.length > 0, Boolean(profile.resume?.storageKey),
+    Boolean(profile.degree || profile.cgpa), profile.skills.length > 0, Boolean(profile.resume?.data?.length || profile.resume?.storageKey),
   ];
   const totalAchievements = await Achievement.countDocuments({ student: user._id });
   const verifiedAchievements = await Achievement.countDocuments({ student: user._id, status: 'verified' });
@@ -129,7 +132,7 @@ router.get('/dashboard', asyncHandler(async (req, res) => {
     missingProfileFields: [
       !user.name && 'name', !profile.department && 'department', !profile.graduationYear && 'graduationYear',
       !(profile.degree || profile.cgpa) && 'academic information', profile.skills.length === 0 && 'skills',
-      !profile.resume?.storageKey && 'resume',
+      !(profile.resume?.data?.length || profile.resume?.storageKey) && 'resume',
     ].filter(Boolean),
     stats: { totalAchievements, verifiedAchievements, pendingVerifications },
     recentAchievements: achievements,
@@ -210,9 +213,14 @@ router.post('/resume', receivePdf, asyncHandler(async (req, res) => {
   if (!req.file) throw new HttpError(400, 'Select a PDF resume to upload.');
   const { profile } = await currentProfile(req.user.id);
   const previousKey = profile.resume?.storageKey;
-  profile.resume = { storageKey: path.basename(req.file.filename), originalName: path.basename(req.file.originalname).slice(0, 150), updatedAt: new Date() };
+  profile.resume = {
+    data: await fs.readFile(req.file.path),
+    originalName: path.basename(req.file.originalname).slice(0, 150),
+    updatedAt: new Date(),
+  };
   await profile.save();
   if (previousKey) await removeStoredFile(previousKey);
+  await unlinkUpload(req.file);
   res.status(201).json({ resume: { originalName: profile.resume.originalName, updatedAt: profile.resume.updatedAt } });
 }));
 
@@ -227,7 +235,12 @@ router.delete('/resume', asyncHandler(async (req, res) => {
 
 router.get('/resume/file', asyncHandler(async (req, res) => {
   const profile = await StudentProfile.findOne({ user: req.user.id });
-  if (!profile?.resume?.storageKey) throw new HttpError(404, 'No resume has been uploaded.');
+  if (!profile?.resume?.data?.length && !profile?.resume?.storageKey) throw new HttpError(404, 'No resume has been uploaded.');
+  if (profile.resume.data?.length) {
+    return res.type('application/pdf')
+      .set('Content-Disposition', `attachment; filename="${profile.resume.originalName}"`)
+      .send(profile.resume.data);
+  }
   res.type('application/pdf').download(getStoredFilePath(profile.resume.storageKey), profile.resume.originalName);
 }));
 
@@ -316,7 +329,9 @@ router.post('/achievements', receivePdf, asyncHandler(async (req, res) => {
     student: req.user.id,
     issueDate: fields.issueDate ? new Date(fields.issueDate) : undefined,
     certificateKey: req.file ? path.basename(req.file.filename) : undefined,
+    certificateData: req.file ? await fs.readFile(req.file.path) : undefined,
   });
+  await unlinkUpload(req.file);
   res.status(201).json({ achievement });
 }));
 
@@ -347,10 +362,14 @@ router.put('/achievements/:id', receivePdf, asyncHandler(async (req, res) => {
   const { issueDate, ...otherFields } = fields;
   Object.assign(achievement, otherFields);
   if (Object.hasOwn(fields, 'issueDate')) achievement.issueDate = issueDate ? new Date(issueDate) : undefined;
-  if (req.file) achievement.certificateKey = path.basename(req.file.filename);
+  if (req.file) {
+    achievement.certificateKey = path.basename(req.file.filename);
+    achievement.certificateData = await fs.readFile(req.file.path);
+  }
   if (achievement.status !== 'draft') achievement.status = 'needs-correction';
   await achievement.save();
   if (req.file && previousCertificateKey) await removeStoredFile(previousCertificateKey);
+  await unlinkUpload(req.file);
   res.json({ achievement });
 }));
 
@@ -371,7 +390,7 @@ router.post('/achievements/:id/submit', asyncHandler(async (req, res) => {
   if (!['draft', 'needs-correction', 'rejected'].includes(achievement.status)) {
     throw new HttpError(409, 'This achievement cannot be submitted in its current state.');
   }
-  if (!achievement.certificateKey) throw new HttpError(400, 'Upload a certificate before requesting verification.');
+  if (!achievement.certificateData?.length && !achievement.certificateKey) throw new HttpError(400, 'Upload a certificate before requesting verification.');
   const action = achievement.status === 'draft' ? 'submitted' : 'resubmitted';
   achievement.status = 'pending';
   achievement.submittedAt = new Date();
@@ -397,8 +416,13 @@ router.get('/verifications', asyncHandler(async (req, res) => {
 
 router.get('/achievements/:id/certificate', asyncHandler(async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) throw new HttpError(400, 'Invalid achievement identifier.');
-  const achievement = await Achievement.findOne({ _id: req.params.id, student: req.user.id }).select('certificateKey title');
-  if (!achievement?.certificateKey) throw new HttpError(404, 'Certificate not found.');
+  const achievement = await Achievement.findOne({ _id: req.params.id, student: req.user.id }).select('certificateKey +certificateData title');
+  if (!achievement?.certificateData?.length && !achievement?.certificateKey) throw new HttpError(404, 'Certificate not found.');
+  if (achievement.certificateData?.length) {
+    return res.type('application/pdf')
+      .set('Content-Disposition', `attachment; filename="${achievement.title}.pdf"`)
+      .send(achievement.certificateData);
+  }
   res.type('application/pdf').download(getStoredFilePath(achievement.certificateKey), `${achievement.title}.pdf`);
 }));
 
@@ -477,10 +501,12 @@ router.post('/resume/analyze', resumeAnalysisLimit, receivePdf, asyncHandler(asy
     await unlinkUpload(req.file);
     throw error;
   }
-  const profile = await StudentProfile.findOne({ user: req.user.id });
+  const profile = await StudentProfile.findOne({ user: req.user.id }).select('+resume.data');
   let filePath = req.file?.path;
   let resumeUpdatedAt = profile.resume?.updatedAt;
-  if (!req.file && profile.resume?.storageKey) {
+  if (!req.file && profile.resume?.data?.length) {
+    filePath = profile.resume.data;
+  } else if (!req.file && profile.resume?.storageKey) {
     filePath = getStoredFilePath(profile.resume.storageKey);
   } else if (!filePath) {
     throw new HttpError(400, 'Upload a PDF or add a resume to your profile before analyzing.');
@@ -498,12 +524,13 @@ router.post('/resume/analyze', resumeAnalysisLimit, receivePdf, asyncHandler(asy
   if (req.file) {
     const previousKey = profile.resume?.storageKey;
     profile.resume = {
-      storageKey: path.basename(req.file.filename),
+      data: await fs.readFile(req.file.path),
       originalName: path.basename(req.file.originalname).slice(0, 150),
       updatedAt: new Date(),
     };
     await profile.save();
     if (previousKey) await removeStoredFile(previousKey);
+    await unlinkUpload(req.file);
     resumeUpdatedAt = profile.resume.updatedAt;
   }
   const analysis = await ResumeAnalysis.create({
@@ -519,8 +546,10 @@ router.post('/resume/analyze', resumeAnalysisLimit, receivePdf, asyncHandler(asy
 router.post('/resume/ats-check', resumeAnalysisLimit, receivePdf, asyncHandler(async (req, res) => {
   await assertPdfFile(req.file);
   try {
-    const profile = await StudentProfile.findOne({ user: req.user.id });
-    const filePath = req.file?.path || (profile?.resume?.storageKey ? getStoredFilePath(profile.resume.storageKey) : null);
+    const profile = await StudentProfile.findOne({ user: req.user.id }).select('+resume.data');
+    const filePath = req.file?.path
+      || profile?.resume?.data
+      || (profile?.resume?.storageKey ? getStoredFilePath(profile.resume.storageKey) : null);
     if (!filePath) throw new HttpError(400, 'Upload a PDF or add a resume to your profile before running an ATS check.');
 
     const document = await extractResumeDocument(filePath);

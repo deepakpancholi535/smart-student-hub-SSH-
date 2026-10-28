@@ -11,6 +11,7 @@ const achievementSchema = new mongoose.Schema(
     credentialUrl: { type: String, trim: true, maxlength: 300 },
     description: { type: String, trim: true, maxlength: 1200 },
     certificateKey: String,
+    certificateData: { type: Buffer, select: false },
     status: { type: String, enum: ['draft', 'pending', 'verified', 'needs-correction', 'rejected'], default: 'draft', index: true },
     submittedAt: Date,
     feedback: { type: String, trim: true, maxlength: 1000 },

@@ -21,8 +21,13 @@ router.get('/verifications', asyncHandler(async (_req, res) => {
 
 router.get('/achievements/:id/certificate', asyncHandler(async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) throw new HttpError(400, 'Invalid achievement identifier.');
-  const achievement = await Achievement.findOne({ _id: req.params.id, status: 'pending' }).select('certificateKey title');
-  if (!achievement?.certificateKey) throw new HttpError(404, 'Pending certificate not found.');
+  const achievement = await Achievement.findOne({ _id: req.params.id, status: 'pending' }).select('certificateKey +certificateData title');
+  if (!achievement?.certificateData?.length && !achievement?.certificateKey) throw new HttpError(404, 'Pending certificate not found.');
+  if (achievement.certificateData?.length) {
+    return res.type('application/pdf')
+      .set('Content-Disposition', `attachment; filename="${achievement.title}.pdf"`)
+      .send(achievement.certificateData);
+  }
   res.type('application/pdf').download(getStoredFilePath(achievement.certificateKey), `${achievement.title}.pdf`);
 }));
 

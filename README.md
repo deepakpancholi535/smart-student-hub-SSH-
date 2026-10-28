@@ -57,7 +57,7 @@ The example configuration is in [`server/.env.example`](./server/.env.example).
 | `CLOUDFLARE_ACCOUNT_ID` | No | Cloudflare account ID for Workers AI. |
 | `CLOUDFLARE_API_TOKEN` | No | Server-side Cloudflare API token with Workers AI access. Analysis returns a clear configuration error if credentials are unset. |
 | `CLOUDFLARE_MODEL` | No | Workers AI model; defaults to `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. |
-| `UPLOAD_DIR` | No | Private PDF storage directory; defaults to `./uploads`. |
+| `UPLOAD_DIR` | No | Legacy private PDF storage directory for existing filesystem-backed files; new resumes and certificates are stored in MongoDB. Defaults to `./uploads` locally and `/tmp/uploads` on Vercel. |
 | `VITE_API_URL` | No | Optional absolute API origin for a separately hosted frontend. Vite proxies `/api` locally. |
 
 ## Features
@@ -82,7 +82,7 @@ The example configuration is in [`server/.env.example`](./server/.env.example).
 - Public: `GET /api/public/portfolios/:slug`, `GET /api/public/portfolios/:slug/resume` (resume route only returns a file if public visibility and the student's explicit resume-download setting are both enabled)
 - Health: `GET /api/health`
 
-All authenticated routes derive ownership from the HttpOnly session cookie. Password changes invalidate other active sessions. The student API exposes no verification approval action. Private upload files are stored outside static web directories under generated names. Resumes and certificates are restricted to PDFs of 5 MB or less, and their PDF signature is checked server-side. Profile photos are limited to 2 MB and JPEG, PNG or WebP signatures are checked. Scanned/image-only PDFs require OCR, which is not included.
+All authenticated routes derive ownership from the HttpOnly session cookie. Password changes invalidate other active sessions. The student API exposes no verification approval action. Resumes and certificates are stored as private MongoDB binary data so they remain available across Vercel function instances; older filesystem-backed records are supported as a migration fallback. Resumes and certificates are restricted to PDFs of 5 MB or less, and their PDF signature is checked server-side. Profile photos are limited to 2 MB and JPEG, PNG or WebP signatures are checked. Scanned/image-only PDFs require OCR, which is not included.
 
 ## Checks
 
@@ -102,8 +102,12 @@ The test suite verifies activity calendar parsing, resume match-score methodolog
 - Portfolio endpoints return a curated projection, not the underlying student or academic record.
 - Restrict self-service registration to approved student domains or replace it with the institution's identity provider before production.
 - Provide institution-managed account provisioning and ensure the MongoDB user roles are assigned through a trusted administrative workflow. No faculty, recruiter, placement-officer, or admin user-management interface is implemented.
-- Use HTTPS in production, set `NODE_ENV=production`, provide a strong secret and managed MongoDB, and replace local file storage with access-controlled object storage for a multi-instance deployment.
+- Use HTTPS in production, set `NODE_ENV=production`, provide a strong secret and managed MongoDB, and configure `MONGODB_URI`, `JWT_SECRET`, `CLIENT_URL`, `CLOUDFLARE_ACCOUNT_ID`, and `CLOUDFLARE_API_TOKEN` in the Vercel Production environment.
 - Enable institution-specific consent, retention, backup, audit, account recovery, and privacy-policy workflows before deployment with real student records.
+
+## Vercel deployment
+
+The root [`vercel.json`](./vercel.json) defines the Vite client and Express server as services. `/api/*` is routed to the server and all other paths are routed to the client. Configure the required production environment variables in Vercel before deploying. MongoDB must allow connections from Vercel, and `CLIENT_URL` should match the deployed client origin. Uploaded resumes, certificates, and profile images are persisted in MongoDB; `/tmp` is used only for request-scoped PDF processing.
 
 ## Suggested commits
 

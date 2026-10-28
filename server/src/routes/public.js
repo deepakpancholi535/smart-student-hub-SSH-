@@ -10,8 +10,13 @@ router.get('/portfolios/:slug', asyncHandler(publicPortfolioHandler));
 router.get('/portfolios/:slug/resume', asyncHandler(async (req, res) => {
   const portfolio = await Portfolio.findOne({ slug: req.params.slug, isPublic: true, showResume: true });
   if (!portfolio) return res.status(404).json({ message: 'Resume download is not available.' });
-  const profile = await StudentProfile.findOne({ user: portfolio.student }).select('resume');
-  if (!profile?.resume?.storageKey) return res.status(404).json({ message: 'Resume download is not available.' });
+  const profile = await StudentProfile.findOne({ user: portfolio.student }).select('resume +resume.data');
+  if (!profile?.resume?.data?.length && !profile?.resume?.storageKey) return res.status(404).json({ message: 'Resume download is not available.' });
+  if (profile.resume.data?.length) {
+    return res.type('application/pdf')
+      .set('Content-Disposition', `attachment; filename="${profile.resume.originalName}"`)
+      .send(profile.resume.data);
+  }
   res.type('application/pdf').download(getStoredFilePath(profile.resume.storageKey), profile.resume.originalName);
 }));
 export default router;
