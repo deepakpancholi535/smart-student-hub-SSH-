@@ -750,12 +750,15 @@ function PortfolioPage() {
     catch { setFailure('Clipboard access is unavailable. Copy the portfolio URL directly.'); }
   }
 
-  const missingFields = !profileData?.profile?.summary || !profileData?.profile?.skills?.length;
+  const missingFields = [
+    !profileData?.profile?.summary?.trim() && 'a professional summary',
+    !profileData?.profile?.skills?.length && 'at least one skill',
+  ].filter(Boolean);
   return (
     <>
       <PageHeader title="Digital portfolio" description="Turn your saved profile into a simple, shareable showcase." />
       {message && <Notice>{message}</Notice>}{failure && <ErrorState message={failure} />}
-      {!portfolio ? <Panel className="portfolio-empty-panel"><EmptyState icon={Globe2} title="Your portfolio is ready when you are." description={missingFields ? 'Add a professional summary and at least one skill before generating your portfolio.' : 'Generate a public portfolio that shares only your name, professional summary, skills, projects and selected achievements.'} action={<button className="button button-primary" disabled={missingFields} onClick={generate}><Globe2 size={16} /> Generate my digital portfolio</button>} /></Panel> :
+      {!portfolio ? <Panel className="portfolio-empty-panel"><EmptyState icon={Globe2} title="Your portfolio is ready when you are." description={missingFields.length ? `Add ${missingFields.join(' and ')} before generating your portfolio.` : 'Generate a public portfolio that shares only your name, professional summary, skills, projects and selected achievements.'} action={<button className="button button-primary" disabled={missingFields.length > 0} onClick={generate}><Globe2 size={16} /> Generate my digital portfolio</button>} /></Panel> :
         <>
           <Panel title="Your portfolio link" className="portfolio-link-panel">
             <div className="portfolio-live"><div className={`visibility-indicator ${portfolio.isPublic ? 'visible' : ''}`}><Globe2 size={18} /></div><div><strong>{portfolio.isPublic ? 'Your portfolio is public' : 'Your portfolio is private'}</strong><span>{portfolio.isPublic ? 'Anyone with your link can view the information you have chosen to share.' : 'Turn public visibility on when you’re ready to share your profile.'}</span></div></div>

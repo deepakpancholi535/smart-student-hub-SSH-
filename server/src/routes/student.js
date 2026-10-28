@@ -452,8 +452,12 @@ router.patch('/notifications/:id/read', asyncHandler(async (req, res) => {
 
 router.post('/portfolio/generate', asyncHandler(async (req, res) => {
   const profile = await StudentProfile.findOne({ user: req.user.id }).populate('user', 'name');
-  if (!profile?.user?.name || !profile.summary?.trim() || !profile.skills.length) {
-    throw new HttpError(400, 'Add a professional summary and at least one skill to generate your portfolio.');
+  const missing = [];
+  if (!profile?.user?.name) missing.push('your name');
+  if (!profile?.summary?.trim()) missing.push('a professional summary');
+  if (!profile?.skills?.length) missing.push('at least one skill');
+  if (missing.length) {
+    throw new HttpError(400, `Add ${missing.join(', ')} before generating your portfolio.`);
   }
   let portfolio = await Portfolio.findOne({ student: req.user.id });
   if (!portfolio) {
