@@ -14,6 +14,7 @@ function ProtectedStudent() {
   const { user, loading } = useAuth();
   if (loading) return <LoadingState />;
   if (!user) return <Navigate to="/login" replace />;
+  if (!user.roles.includes('student') && user.roles.includes('faculty')) return <Navigate to="/faculty" replace />;
   if (!user.roles.includes('student')) return <main className="access-denied"><h1>Portal not available</h1><p>This account does not have access to the Student Portal.</p></main>;
   return <Outlet />;
 }
@@ -39,16 +40,23 @@ function App() {
               {studentRoutes.map(({ path, element }) => <Route key={path} path={path} element={element} />)}
               <Route index element={<Navigate to="dashboard" replace />} />
             </Route>
-            <Route element={<ProtectedFaculty />}>
-              <Route path="/faculty" element={<FacultyLayout><FacultyDashboard /></FacultyLayout>} />
-            </Route>
           </Route>
-          <Route path="/" element={<Navigate to="/student/dashboard" replace />} />
+          <Route element={<ProtectedFaculty />}>
+            <Route path="/faculty" element={<FacultyLayout><FacultyDashboard /></FacultyLayout>} />
+          </Route>
+          <Route path="/" element={<RoleHome />} />
           <Route path="*" element={<main className="access-denied"><h1>Page not found</h1><a href="/student/dashboard">Return to your dashboard</a></main>} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>
   );
+}
+
+function RoleHome() {
+  const { user, loading } = useAuth();
+  if (loading) return <LoadingState />;
+  if (!user) return <Navigate to="/login" replace />;
+  return <Navigate to={user.roles.includes('faculty') && !user.roles.includes('student') ? '/faculty' : '/student/dashboard'} replace />;
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(<React.StrictMode><App /></React.StrictMode>);
