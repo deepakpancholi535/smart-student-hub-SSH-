@@ -13,7 +13,8 @@ const router = Router();
 router.use(requireAuth, requireRole('faculty'));
 
 router.get('/assignment', asyncHandler(async (req, res) => {
-  res.json({ assignment: req.user.facultyAssignment || null });
+  const assignment = req.user.facultyAssignment;
+  res.json({ assignment: assignment?.locked ? assignment : null });
 }));
 
 router.put('/assignment', asyncHandler(async (req, res) => {

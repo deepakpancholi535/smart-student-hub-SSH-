@@ -17,8 +17,9 @@ export function FacultyDashboard() {
     setLoading(true);
     try {
       const current = await api('/faculty/assignment');
-      setAssignment(current.assignment);
-      if (current.assignment) setForm(current.assignment);
+      const currentAssignment = current.assignment?.locked ? current.assignment : null;
+      setAssignment(currentAssignment);
+      if (currentAssignment) setForm(currentAssignment);
       const result = await api('/faculty/verifications');
       setRequests(result.verifications);
     } catch (error) { setFailure(error.message); }
