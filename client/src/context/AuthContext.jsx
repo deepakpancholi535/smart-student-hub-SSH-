@@ -17,6 +17,7 @@ export function AuthProvider({ children }) {
   async function signIn(credentials, register = false) {
     const { user: currentUser } = await api(`/auth/${register ? 'register' : 'login'}`, json('POST', credentials));
     setUser(currentUser);
+    return currentUser;
   }
 
   async function signOut() {

@@ -20,6 +20,7 @@ import { analyzeResume, extractResumeDocument, extractResumeText } from '../serv
 import { reviewResumeForAts } from '../services/resumeAts.js';
 import { getPublicPortfolio } from '../services/portfolio.js';
 import { getActivityHeatmaps } from '../services/activityHeatmaps.js';
+import { BRANCHES, GROUPS, SECTIONS } from '../config/assignments.js';
 
 const router = Router();
 router.use(requireAuth, requireRole('student'));
@@ -65,6 +66,9 @@ const profileSchema = z.object({
     sgpa: z.number().min(0).max(10),
   })).max(12).refine((grades) => new Set(grades.map((grade) => grade.semester)).size === grades.length, 'A semester can only appear once.').optional(),
   institution: z.string().trim().max(160).optional(),
+  branch: z.enum(BRANCHES).optional(),
+  section: z.enum(SECTIONS).optional(),
+  group: z.enum(GROUPS).optional(),
   summary: z.string().trim().max(1000).optional(),
   careerInterests: z.array(z.string().trim().min(1).max(80)).max(15).optional(),
   skills: z.array(z.object({
@@ -155,6 +159,9 @@ router.get('/profile/activity', profileActivityLimit, asyncHandler(async (req, r
 router.put('/profile', asyncHandler(async (req, res) => {
   const updates = profileSchema.parse(req.body);
   const { user, profile } = await currentProfile(req.user.id);
+  if (profile.assignmentLocked && ['branch', 'section', 'group'].some((field) => Object.hasOwn(updates, field) && updates[field] !== profile[field])) {
+    throw new HttpError(409, 'Your branch, section and group are locked after the first verification request.');
+  }
   Object.assign(profile, updates);
   await profile.save();
   res.json({ profile: publicProfile(user, profile) });
@@ -391,11 +398,17 @@ router.post('/achievements/:id/submit', asyncHandler(async (req, res) => {
     throw new HttpError(409, 'This achievement cannot be submitted in its current state.');
   }
   if (!achievement.certificateData?.length && !achievement.certificateKey) throw new HttpError(400, 'Upload a certificate before requesting verification.');
+  const assignment = await StudentProfile.findOne({ user: req.user.id }).select('branch section group assignmentLocked');
+  if (!assignment?.branch || !assignment.section || !assignment.group) {
+    throw new HttpError(400, 'Set your branch, section and group in your profile before requesting verification.');
+  }
   const action = achievement.status === 'draft' ? 'submitted' : 'resubmitted';
   achievement.status = 'pending';
   achievement.submittedAt = new Date();
   achievement.feedback = '';
   achievement.history.push({ action });
+  assignment.assignmentLocked = true;
+  await assignment.save();
   await achievement.save();
   await Notification.create({
     recipient: req.user.id,

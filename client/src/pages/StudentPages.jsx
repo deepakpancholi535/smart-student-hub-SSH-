@@ -155,7 +155,8 @@ function Quick({ to, icon: Icon, label }) {
 
 const blankProfile = {
   phone: '', department: '', degree: '', graduationYear: '', semester: '', cgpa: '', semesterGrades: [],
-  institution: '', summary: '', careerInterests: '', skills: [], links: { github: '', linkedin: '', portfolio: '' }, projects: [], resume: null,
+  institution: '', branch: '', section: '', group: '', assignmentLocked: false,
+  summary: '', careerInterests: '', skills: [], links: { github: '', linkedin: '', portfolio: '' }, projects: [], resume: null,
 };
 
 function ProfilePage() {
@@ -397,7 +398,11 @@ function ProfilePage() {
             <Field label="Graduation year"><input type="number" min="1950" max="2100" value={form.graduationYear || ''} onChange={(event) => setForm({ ...form, graduationYear: event.target.value })} /></Field>
             <Field label="Current semester"><input type="number" min="1" max="12" value={form.semester || ''} onChange={(event) => setForm({ ...form, semester: event.target.value })} /></Field>
             <Field label="CGPA (out of 10)"><input type="number" step="0.01" min="0" max="10" value={form.cgpa ?? ''} onChange={(event) => setForm({ ...form, cgpa: event.target.value })} /></Field>
+            <Field label="Branch"><select disabled={form.assignmentLocked} value={form.branch || ''} onChange={(event) => setForm({ ...form, branch: event.target.value })}><option value="">Select branch</option>{['CSE', 'IT', 'IoT', 'AI', 'DS', 'ME', 'EE', 'CE', 'ECE'].map((branch) => <option key={branch}>{branch}</option>)}</select></Field>
+            <Field label="Section"><select disabled={form.assignmentLocked} value={form.section || ''} onChange={(event) => setForm({ ...form, section: event.target.value })}><option value="">Select section</option>{'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map((section) => <option key={section}>{section}</option>)}</select></Field>
+            <Field label="Group"><select disabled={form.assignmentLocked} value={form.group || ''} onChange={(event) => setForm({ ...form, group: event.target.value })}><option value="">Select group</option><option value="1">1</option><option value="2">2</option></select></Field>
           </div>
+          <p className="caption">{form.assignmentLocked ? 'Your batch assignment is locked because you have submitted a verification request.' : 'Set your branch, section and group before requesting certificate verification. These fields lock after your first request.'}</p>
           <div className="sgpa-section">
             <div className="sgpa-heading"><strong>Semester-wise SGPA</strong><span className="caption">Student-entered and not institution-verified.</span></div>
             {form.semesterGrades.length > 0 && <div className="sgpa-list">{form.semesterGrades.map((grade) => <span className="skill-chip" key={grade.semester}>Semester {grade.semester} · {grade.sgpa}<button aria-label={`Remove semester ${grade.semester} SGPA`} onClick={() => setForm({ ...form, semesterGrades: form.semesterGrades.filter((item) => item.semester !== grade.semester) })}><X size={13} /></button></span>)}</div>}

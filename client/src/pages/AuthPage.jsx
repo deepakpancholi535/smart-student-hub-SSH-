@@ -11,15 +11,15 @@ export function AuthPage({ register = false }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  if (user) return <Navigate to="/student/dashboard" replace />;
+  if (user) return <Navigate to={user.roles.includes('faculty') && !user.roles.includes('student') ? '/faculty' : '/student/dashboard'} replace />;
 
   async function submit(event) {
     event.preventDefault();
     setError('');
     setBusy(true);
     try {
-      await signIn(form, register);
-      navigate('/student/dashboard', { replace: true });
+      const signedInUser = await signIn(form, register);
+      navigate(signedInUser?.roles?.includes('faculty') && !signedInUser.roles.includes('student') ? '/faculty' : '/student/dashboard', { replace: true });
     } catch (failure) {
       setError(failure.message);
     } finally {

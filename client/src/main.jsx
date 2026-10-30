@@ -3,7 +3,9 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { StudentLayout } from './layouts/StudentLayout';
+import { FacultyLayout } from './layouts/FacultyLayout';
 import { AuthPage } from './pages/AuthPage';
+import { FacultyDashboard } from './pages/FacultyPages';
 import { PublicPortfolioPage, studentRoutes } from './pages/StudentPages';
 import { LoadingState } from './components/common';
 import './styles.css';
@@ -13,6 +15,14 @@ function ProtectedStudent() {
   if (loading) return <LoadingState />;
   if (!user) return <Navigate to="/login" replace />;
   if (!user.roles.includes('student')) return <main className="access-denied"><h1>Portal not available</h1><p>This account does not have access to the Student Portal.</p></main>;
+  return <Outlet />;
+}
+
+function ProtectedFaculty() {
+  const { user, loading } = useAuth();
+  if (loading) return <LoadingState />;
+  if (!user) return <Navigate to="/login" replace />;
+  if (!user.roles.includes('faculty')) return <main className="access-denied"><h1>Portal not available</h1><p>This account does not have access to the Faculty Portal.</p></main>;
   return <Outlet />;
 }
 
@@ -28,6 +38,9 @@ function App() {
             <Route path="/student" element={<StudentLayout />}>
               {studentRoutes.map(({ path, element }) => <Route key={path} path={path} element={element} />)}
               <Route index element={<Navigate to="dashboard" replace />} />
+            </Route>
+            <Route element={<ProtectedFaculty />}>
+              <Route path="/faculty" element={<FacultyLayout><FacultyDashboard /></FacultyLayout>} />
             </Route>
           </Route>
           <Route path="/" element={<Navigate to="/student/dashboard" replace />} />
